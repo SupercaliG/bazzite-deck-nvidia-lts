@@ -14,6 +14,9 @@ bazzite-nvidia stage built FROM it inherits them):
    desktop on a TV gets the AYANEO AIR quirk (rotated "internal" panel).
 2. Enable uupd.timer so the system stages OS updates in the background.
    Deck images ship it disabled and rely on Steam's "Check for updates" button.
+3. Boot splash: use the SteamOS Plymouth theme instead of "bgrt", which
+   repeats the motherboard's firmware logo during boot. The initramfs is
+   rebuilt later in the build, so the theme lands in it.
 """
 
 import sys
@@ -24,13 +27,16 @@ MARKER = "# Fork (bazzite-deck-nvidia-lts) patches"
 PATCH = MARKER + r"""
 # 1. device-quirks: empty DMI product_name must not match the AYANEO AIR quirk.
 # 2. Stage OS updates automatically in the background (uupd.timer).
+# 3. Console-style boot splash (SteamOS logo, not the motherboard logo).
 RUN test -f /usr/share/gamescope-session-plus/device-quirks && \
     sed -i \
         -e 's|^AIR_LIST="AIR:AIR Pro:AIR Plus:SLIDE:"|AIR_LIST="AIR:AIR Pro:AIR Plus:SLIDE"|' \
         -e '/^SYS_ID=/a [ -n "$SYS_ID" ] || SYS_ID="unknown-desktop"' \
         /usr/share/gamescope-session-plus/device-quirks && \
     grep -qF '|| SYS_ID="unknown-desktop"' /usr/share/gamescope-session-plus/device-quirks && \
-    systemctl enable uupd.timer
+    systemctl enable uupd.timer && \
+    plymouth-set-default-theme steamos && \
+    test "$(plymouth-set-default-theme)" = steamos
 
 """
 
