@@ -1,7 +1,7 @@
 name: Build Bazzite
 on:
   schedule:
-    - cron: "40 4 * * 1" # 4:40 utc monday
+    - cron: "40 6 * * 1" # 6:40 utc monday (fork: weekly rebuild from upstream main)
   pull_request:
     branches:
       - testing
@@ -52,20 +52,48 @@ jobs:
       contents: read
     outputs:
       version: ${{ steps.generate.outputs.version }}
+      matrix: ${{ steps.upstream.outputs.matrix }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # Fork: take the Fedora/kernel versions from upstream Bazzite's own build
+      # matrix, so this image follows upstream without manual edits. The LTS
+      # kernel comes from upstream's bazzite-nvidia (legacy driver) entry.
+      - name: Read upstream build matrix
+        id: upstream
+        run: |
+          set -euo pipefail
+          up=/tmp/upstream-build.yml
+          curl -fsSL --retry 3 -o "$up"             https://raw.githubusercontent.com/ublue-os/bazzite/main/.github/workflows/build.yml
+
+          base="$(yq -o=json -I=0 '[.jobs.push-ghcr.strategy.matrix.include[] | select(has("fedora_version"))][0]' "$up")"
+          lts="$(yq -o=json -I=0 '[.jobs.push-ghcr.strategy.matrix.include[] | select(.image == "bazzite-nvidia")][0]' "$up")"
+          jq -e '.fedora_version and .kernel_version and .base_image_flavor and .arch' <<<"$base" >/dev/null             || { echo "::error::Could not read base entry from upstream matrix"; exit 1; }
+          jq -e '.kernel_flavor and .kernel_version' <<<"$lts" >/dev/null             || { echo "::error::Could not read bazzite-nvidia (LTS) entry from upstream matrix"; exit 1; }
+
+          matrix="$(jq -cn --argjson b "$base" --argjson l "$lts"             '{image: ["bazzite-deck-nvidia-lts"], include: [$b, ($l + {image: "bazzite-deck-nvidia-lts"})]}')"
+          echo "Build matrix: $matrix"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          echo "fedora_version=$(jq -r .fedora_version <<<"$base")" >> "$GITHUB_OUTPUT"
+
+          # Warn (do not fail) when upstream's workflow changed since this fork's
+          # copy was last reviewed; new build args or steps may need porting.
+          known="$(cat tools/upstream-build.sha256)"
+          current="$(sha256sum "$up" | cut -d' ' -f1)"
+          if [[ "$known" != "$current" ]]; then
+            echo "::warning::Upstream build.yml changed ($current). Review it against this fork's build.yml, then update tools/upstream-build.sha256."
+          fi
 
       - name: Generate version tag
         id: generate
         run: |
           set -euo pipefail
 
-          workflow=.github/workflows/build.yml
-          mapfile -t images < <(yq -r '.jobs.push-ghcr.strategy.matrix.image[]' "$workflow")
-          fedora_version="$(yq -r '.jobs.push-ghcr.strategy.matrix.include[] | select(has("fedora_version")) | .fedora_version' "$workflow" | head -n1)"
-          if [[ -z "$fedora_version" || "$fedora_version" == "null" || ${#images[@]} -eq 0 ]]; then
-            echo "Failed to read the image matrix from $workflow" >&2
+          images=(bazzite-deck-nvidia-lts)
+          fedora_version="${{ steps.upstream.outputs.fedora_version }}"
+          if [[ -z "$fedora_version" || "$fedora_version" == "null" ]]; then
+            echo "Failed to read fedora_version from the upstream matrix" >&2
             exit 1
           fi
 
@@ -109,20 +137,10 @@ jobs:
       artifact-metadata: write
     strategy:
       fail-fast: false
-      matrix:
-        image:
-          # Fork: Gaming Mode (deck) + legacy NVIDIA driver (nvidia-lts, 580 branch)
-          # for Maxwell/Pascal/Volta cards (GTX 900/1000) that nvidia-open can't drive.
-          - bazzite-deck-nvidia-lts
-        include:
-          - fedora_version: 44
-            kernel_flavor: ogc
-            kernel_version: 7.2.11-ogc4.1.fc44
-            base_image_flavor: main
-            arch: x86_64
-          - image: bazzite-deck-nvidia-lts
-            kernel_flavor: ogc-lts
-            kernel_version: 6.18.56-ogc1.1.fc44
+      # Fork: Gaming Mode (deck) + legacy NVIDIA driver (nvidia-lts, 580 branch)
+      # for Maxwell/Pascal/Volta cards (GTX 900/1000) that nvidia-open can't drive.
+      # Versions come from upstream's matrix (see the version job).
+      matrix: ${{ fromJSON(needs.version.outputs.matrix) }}
     steps:
       - name: Show disk space
         run: sudo df -h
@@ -202,11 +220,27 @@ jobs:
           echo "Generated the following:"
           cat $GITHUB_OUTPUT
 
-      # Checkout push-to-registry action GitHub repository
-      - name: Checkout repository
+      # Fork: build from current upstream Bazzite source, then apply this
+      # fork's patches (tools/apply_fork_patches.py) on top.
+      - name: Checkout upstream Bazzite
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          repository: ublue-os/bazzite
+          ref: main
           submodules: recursive
+
+      - name: Checkout fork tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: .fork
+          sparse-checkout: tools
+
+      - name: Apply fork patches
+        run: |
+          set -euo pipefail
+          python3 .fork/tools/apply_fork_patches.py Containerfile
+          rm -rf .fork
+          echo "Built from upstream ublue-os/bazzite@$(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
 
       # Prepare offline documentation
       - name: Download offline docs

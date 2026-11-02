@@ -640,9 +640,6 @@ RUN --mount=type=cache,dst=/var/cache \
     /ctx/cleanup
 
 # Install new packages
-# Fork fix (device-quirks): boards with an empty DMI product_name (e.g. Intel
-# DZ77GA-70K) give SYS_ID="", which matches the "::" produced by AIR_LIST's
-# trailing colon and applies the AYANEO AIR quirk (rotated internal panel).
 RUN --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/cache/libdnf5 \
     --mount=type=cache,dst=/var/log \
@@ -686,10 +683,6 @@ RUN --mount=type=cache,dst=/var/cache \
         -e 's|^export GAMESCOPE_SESSION_STEAM_BOOTSTRAP_DIR=.*$|export GAMESCOPE_SESSION_STEAM_BOOTSTRAP_DIR="${HOME}/.local/share"|' \
         /usr/share/gamescope-session-plus/sessions.d/steam && \
     sed -i 's|^CLIENTCMD="opengamepadui --overlay-mode|/usr/libexec/hwsupport/non-valve-handheld-hardware \&\& CLIENTCMD="opengamepadui --accessibility disabled --overlay-mode --steam-input --steamos-manager --skip-update-pack|' /usr/share/gamescope-session-plus/sessions.d/ogui-steam && \
-    sed -i \
-        -e 's|^AIR_LIST="AIR:AIR Pro:AIR Plus:SLIDE:"|AIR_LIST="AIR:AIR Pro:AIR Plus:SLIDE"|' \
-        -e '/^SYS_ID=/a [ -n "$SYS_ID" ] || SYS_ID="unknown-desktop"' \
-        /usr/share/gamescope-session-plus/device-quirks && \
     git clone https://gitlab.com/evlaV/jupiter-dock-updater-bin.git \
         --depth 1 \
         /tmp/jupiter-dock-updater-bin && \

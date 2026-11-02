@@ -1,0 +1,65 @@
+#!/usr/bin/env python3
+"""Apply this fork's changes to an upstream Bazzite Containerfile.
+
+The build workflow checks out upstream ublue-os/bazzite (main) and runs this
+script on its Containerfile, so the fork only carries a small, explicit patch
+instead of a diverging copy of the whole tree.
+
+Patches (added as one RUN at the end of the bazzite-deck stage, so the
+bazzite-nvidia stage built FROM it inherits them):
+
+1. gamescope-session device-quirks: AIR_LIST ends with a ":" so
+   ":$AIR_LIST:" contains "::". Boards with an empty DMI product_name
+   (e.g. Intel DZ77GA-70K) give SYS_ID="", ":$SYS_ID:" == "::" matches, and a
+   desktop on a TV gets the AYANEO AIR quirk (rotated "internal" panel).
+2. Enable uupd.timer so the system stages OS updates in the background.
+   Deck images ship it disabled and rely on Steam's "Check for updates" button.
+"""
+
+import sys
+from pathlib import Path
+
+MARKER = "# Fork (bazzite-deck-nvidia-lts) patches"
+
+PATCH = MARKER + r"""
+# 1. device-quirks: empty DMI product_name must not match the AYANEO AIR quirk.
+# 2. Stage OS updates automatically in the background (uupd.timer).
+RUN test -f /usr/share/gamescope-session-plus/device-quirks && \
+    sed -i \
+        -e 's|^AIR_LIST="AIR:AIR Pro:AIR Plus:SLIDE:"|AIR_LIST="AIR:AIR Pro:AIR Plus:SLIDE"|' \
+        -e '/^SYS_ID=/a [ -n "$SYS_ID" ] || SYS_ID="unknown-desktop"' \
+        /usr/share/gamescope-session-plus/device-quirks && \
+    grep -qF '|| SYS_ID="unknown-desktop"' /usr/share/gamescope-session-plus/device-quirks && \
+    systemctl enable uupd.timer
+
+"""
+
+DECK_STAGE = "FROM bazzite AS bazzite-deck"
+DECK_FINALIZE = "\n# Cleanup & Finalize\n"
+
+
+def main() -> int:
+    path = Path(sys.argv[1] if len(sys.argv) > 1 else "Containerfile")
+    text = path.read_text(encoding="utf-8")
+
+    if MARKER in text:
+        print(f"{path}: fork patches already applied")
+        return 0
+
+    stage = text.find(DECK_STAGE)
+    if stage < 0:
+        sys.exit(f"{path}: deck stage '{DECK_STAGE}' not found; upstream layout changed")
+
+    finalize = text.find(DECK_FINALIZE, stage)
+    next_stage = text.find("\nFROM ", stage + len(DECK_STAGE))
+    if finalize < 0 or (next_stage >= 0 and finalize > next_stage):
+        sys.exit(f"{path}: '# Cleanup & Finalize' not found in deck stage; upstream layout changed")
+
+    insert_at = finalize + 1  # keep the newline before the finalize comment
+    path.write_text(text[:insert_at] + PATCH + text[insert_at:], encoding="utf-8")
+    print(f"{path}: fork patches applied to deck stage")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
