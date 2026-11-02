@@ -18,6 +18,9 @@ bazzite-nvidia stage built FROM it inherits them):
    repeats the motherboard's firmware logo during boot. The initramfs is
    rebuilt later in the build, so the theme lands in it. "steamos" is a
    script theme, so plymouth-plugin-script is installed too.
+4. steamcouch dashboard (github.com/SupercaliG/steamcouch): latest release
+   installed to /usr/lib/steamcouch, with its session script and the
+   gamescope-session-plus hook that runs it in place of the Steam UI.
 """
 
 import sys
@@ -44,6 +47,19 @@ RUN --mount=type=cache,dst=/var/cache \
     plymouth-set-default-theme steamos && \
     test "$(plymouth-set-default-theme)" = steamos && \
     /ctx/cleanup
+
+# 4. steamcouch: PS5-style dashboard as the Gaming Mode session client.
+RUN --mount=type=tmpfs,dst=/tmp \
+    curl -fsSL --retry 3 -o /tmp/steamcouch.tgz \
+        https://github.com/SupercaliG/steamcouch/releases/latest/download/steamcouch-linux-x64.tar.gz && \
+    mkdir -p /usr/lib/steamcouch && \
+    tar -xzf /tmp/steamcouch.tgz -C /usr/lib/steamcouch --strip-components=1 --no-same-owner && \
+    chmod -R go-w /usr/lib/steamcouch && \
+    test -x /usr/lib/steamcouch/app/steamcouch && \
+    install -m 0755 /usr/lib/steamcouch/steamcouch-session /usr/libexec/steamcouch-session && \
+    install -D -m 0644 /usr/lib/steamcouch/ogui-steam.session-override \
+        /etc/gamescope-session-plus/sessions.d/ogui-steam && \
+    echo "steamcouch $(cat /usr/lib/steamcouch/BUILD)"
 
 """
 
