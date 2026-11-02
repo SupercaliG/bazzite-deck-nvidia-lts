@@ -14,6 +14,7 @@ bazzite-nvidia stage built FROM it inherits them):
    desktop on a TV gets the AYANEO AIR quirk (rotated "internal" panel).
 2. Enable uupd.timer so the system stages OS updates in the background.
    Deck images ship it disabled and rely on Steam's "Check for updates" button.
+   The deck finalize step disables it again, so that line is removed there.
 3. Boot splash: use the SteamOS Plymouth theme instead of "bgrt", which
    repeats the motherboard's firmware logo during boot. The initramfs is
    rebuilt later in the build, so the theme lands in it. "steamos" is a
@@ -65,6 +66,7 @@ RUN --mount=type=tmpfs,dst=/tmp \
 
 DECK_STAGE = "FROM bazzite AS bazzite-deck"
 DECK_FINALIZE = "\n# Cleanup & Finalize\n"
+UUPD_DISABLE = "    systemctl disable uupd.timer && \\\n"
 
 
 def main() -> int:
@@ -84,7 +86,16 @@ def main() -> int:
     if finalize < 0 or (next_stage >= 0 and finalize > next_stage):
         sys.exit(f"{path}: '# Cleanup & Finalize' not found in deck stage; upstream layout changed")
 
+    # The deck stage's finalize step runs `systemctl disable uupd.timer` after
+    # this patch, which would undo patch 2. Drop that one line from it.
+    end = next_stage if next_stage >= 0 else len(text)
+    deck_finalize = text[finalize:end]
+    if UUPD_DISABLE not in deck_finalize:
+        sys.exit(f"{path}: '{UUPD_DISABLE.strip()}' not found in deck finalize; upstream layout changed")
+    deck_finalize = deck_finalize.replace(UUPD_DISABLE, "", 1)
+
     insert_at = finalize + 1  # keep the newline before the finalize comment
+    text = text[:finalize] + deck_finalize + text[end:]
     path.write_text(text[:insert_at] + PATCH + text[insert_at:], encoding="utf-8")
     print(f"{path}: fork patches applied to deck stage")
     return 0
