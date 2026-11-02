@@ -16,7 +16,8 @@ bazzite-nvidia stage built FROM it inherits them):
    Deck images ship it disabled and rely on Steam's "Check for updates" button.
 3. Boot splash: use the SteamOS Plymouth theme instead of "bgrt", which
    repeats the motherboard's firmware logo during boot. The initramfs is
-   rebuilt later in the build, so the theme lands in it.
+   rebuilt later in the build, so the theme lands in it. "steamos" is a
+   script theme, so plymouth-plugin-script is installed too.
 """
 
 import sys
@@ -28,15 +29,21 @@ PATCH = MARKER + r"""
 # 1. device-quirks: empty DMI product_name must not match the AYANEO AIR quirk.
 # 2. Stage OS updates automatically in the background (uupd.timer).
 # 3. Console-style boot splash (SteamOS logo, not the motherboard logo).
-RUN test -f /usr/share/gamescope-session-plus/device-quirks && \
+RUN --mount=type=cache,dst=/var/cache \
+    --mount=type=cache,dst=/var/log \
+    --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=tmpfs,dst=/tmp \
+    test -f /usr/share/gamescope-session-plus/device-quirks && \
     sed -i \
         -e 's|^AIR_LIST="AIR:AIR Pro:AIR Plus:SLIDE:"|AIR_LIST="AIR:AIR Pro:AIR Plus:SLIDE"|' \
         -e '/^SYS_ID=/a [ -n "$SYS_ID" ] || SYS_ID="unknown-desktop"' \
         /usr/share/gamescope-session-plus/device-quirks && \
     grep -qF '|| SYS_ID="unknown-desktop"' /usr/share/gamescope-session-plus/device-quirks && \
     systemctl enable uupd.timer && \
+    dnf5 -y install plymouth-plugin-script && \
     plymouth-set-default-theme steamos && \
-    test "$(plymouth-set-default-theme)" = steamos
+    test "$(plymouth-set-default-theme)" = steamos && \
+    /ctx/cleanup
 
 """
 
