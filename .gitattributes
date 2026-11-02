@@ -11,3 +11,4 @@
 *.json linguist-detectable=true
 *.json linguist-documentation=false
 *.json linguist-language=JSON
+*.sh text eol=lf
